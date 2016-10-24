@@ -1,0 +1,170 @@
+---
+title: "Manuscript_alpha_beta_diversity_plots"
+output: html_document
+---
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r}
+library(phyloseq)
+library(ggplot2)
+library(gridExtra)
+library(secondgenomeR)
+library(grid)
+
+normalize <- function (physeq, method = "tss", log = FALSE, returnMatrix = FALSE, 
+    ...) 
+{
+    METHODS <- c("css", "tss", "deseq", "tmm", "upperquantile", 
+        "vst", "pa")
+    method <- pmatch(tolower(method), METHODS)
+    if (is.na(method)) 
+        stop("invalid normalization method")
+    if (method == -1) 
+        stop("ambiguous transformation method")
+    if (method == "1") {
+        normalizedObject = make_metagenomeSeq(physeq, ...)
+        nmat = MRcounts(normalizedObject, log = FALSE, norm = TRUE, 
+            sl = median(normFactors(normalizedObject)))
+    }
+    counts = as(otu_table(physeq), "matrix")
+    if (method == "2") {
+        tss = colSums(counts)
+        nmat = sweep(counts, 2, tss, "/")
+    }
+    if (method == "3") {
+        geoMeans = apply(counts, 1, gm_mean, na.rm = TRUE, zero.propagate = FALSE)
+        deseq_sf = estimateSizeFactorsForMatrix(counts, geoMeans = geoMeans, 
+            ...)
+        nmat = sweep(counts, 2, deseq_sf, "/")
+    }
+    if (method == "4") {
+        d <- DGEList(counts, lib.size = as.vector(colSums(counts)))
+        d <- calcNormFactors(d, method = "TMM", ...)
+        nmat = cpm(d, normalized.lib.size = TRUE)
+    }
+    if (method == "5") {
+        d <- DGEList(counts, lib.size = as.vector(colSums(counts)))
+        d <- calcNormFactors(d, method = "upperquartile", ...)
+        nmat = cpm(d, normalized.lib.size = TRUE)
+    }
+    if (log) {
+        if (!method %in% c("6", "7")) {
+            nmat = log2(nmat + 1)
+        }
+        else {
+            warning("Log transformation not applicable for method")
+            return(NULL)
+        }
+    }
+    if (method == "6") {
+        if (!taxa_are_rows(physeq)) {
+            physeq <- t(physeq)
+        }
+        colData <- data.frame(sample_data(physeq))
+        dds <- DESeqDataSetFromMatrix(counts, colData, ~1)
+        geoMeans = apply(counts(dds), 1, gm_mean, na.rm = TRUE, 
+            zero.propagate = FALSE)
+        dds = estimateSizeFactors(dds, geoMeans = geoMeans)
+        dds <- estimateDispersions(dds, ...)
+        nmat = getVarianceStabilizedData(dds)
+    }
+    if (method == "7") {
+        nmat = 1 - (1 - counts > 0)
+    }
+    if (returnMatrix == FALSE) {
+        physeq@otu_table = otu_table(nmat, taxa_are_rows = T)
+        return(physeq)
+    }
+    else {
+        return(nmat)
+    }
+}
+
+load("~/Q_otu_tax.RData")
+Q_otu_tax <- subset_samples(Q_otu_tax, !(Treatment == "Yes"))
+sample_data(Q_otu_tax)$Study <- gsub("Zack_V4_MiSeq", "Zackular_V4_MiSeq", sample_data(Q_otu_tax)$Study)
+CRCpalette <- c(Brim_V13_454 = "#84CF04", Chen_V13_454 = "#01B5BB", Flemer_V34_MiSeq ="#E50E63", Pascual_V13_454 = "#8F389E", Wang_V3_454 = "#DF8236", Weir_V4_454 = "#228b22", WuZhu_V3_454 = "#F1BA2F", Zackular_V4_MiSeq = "#9F832D", Zeller_V4_MiSeq = "#154db3", "RE-Model" = "#6D7272")
+colScale <- scale_colour_manual(name = "Study",values = CRCpalette)
+
+
+#Total 424 samples retained, 5% ~ 21.8 samples
+percent_to_keep <- 0.05
+n_to_keep_Q = percent_to_keep*nsamples(Q_otu_tax)
+keepOTUs_Q = apply(as(otu_table(Q_otu_tax), "matrix"), 1, function(x) sum(x >= 1L, na.rm = TRUE) >= n_to_keep_Q)
+physeq_Q <- prune_taxa(keepOTUs_Q, Q_otu_tax)
+
+ordMain = ordinate(physeq_Q, method="PCoA", distance="bray") 
+physeq_Q_tss <- transform_sample_counts(physeq_Q, function(x) x/sum(x))
+p_Q_Bray = plot_ordination(physeq_Q, ordMain, "samples", color="Study", shape="disease_stat") 
+p_Q_Bray$layers <- p_Q_Bray$layers[-1]
+p_Q_Bray <- p_Q_Bray + geom_point(size=4, alpha=0.9)
+
+p_Q_Bray <- p_Q_Bray + scale_x_continuous(breaks=c(-0.4,-0.2,0.0,0.2, 0.4)) + ggtitle("1A") +  scale_shape_discrete(name  ="Disease Status",  labels=c("CRA", "CRC", "Control")) + theme_set(theme_bw(base_size=18)) + theme(plot.title = element_text(hjust = 0)) + colScale
+#########################################################################################################################
+
+ordPresAbs = ordinate(normalize(physeq_Q,method="pa"), method="PCoA", distance="jaccard")
+p_Q_jaccard <- plot_ordination(physeq_Q_tss, ordPresAbs, "samples", color="Study", shape="disease_stat") +
+  geom_point(size=4) + ggtitle("1B") +  scale_shape_discrete(name="Disease Status",  labels=c("CRA", "CRC", "Control")) + theme_set(theme_bw(base_size=18)) + theme(plot.title = element_text(hjust = 0)) + colScale
+
+#p_Q_jaccard + scale_x_continuous(breaks=c(-0.4,-0.2,0.0,0.2, 0.4)) + colScale
+```
+
+The two plots above are on QIIME OTU abundance tables
+
+```{r, echo=FALSE}
+load("~/SG_otu_tax.RData")
+SG_otu_tax <- subset_samples(SG_otu_tax, !(Treatment == "Yes"))
+sample_data(SG_otu_tax)$Study <- gsub("Zack_V4_MiSeq", "Zackular_V4_MiSeq", sample_data(SG_otu_tax)$Study)
+
+#Total 424 samples retained, 5% ~ 21.8 samples
+percent_to_keep <- 0.05
+n_to_keep_SG = percent_to_keep*nsamples(SG_otu_tax)
+keepOTUs_SG = apply(as(otu_table(SG_otu_tax), "matrix"), 1, function(x) sum(x >= 1L, na.rm = TRUE) >= n_to_keep_SG)
+physeq_SG <- prune_taxa(keepOTUs_SG, SG_otu_tax)
+
+
+ordMain = ordinate(physeq_SG, method="PCoA", distance="bray")
+physeq_SG_tss <- normalize(physeq_SG, method="tss")
+p_SG_Bray = plot_ordination(physeq_SG_tss, ordMain, "samples", color="Study", shape="disease_stat") 
+p_SG_Bray$layers <- p_SG_Bray$layers[-1]
+p_SG_Bray <- p_SG_Bray + geom_point(size=4, alpha=0.9) + scale_x_continuous(breaks=c(-0.4,-0.2,0.0,0.2, 0.4)) + ggtitle("1C") +  scale_shape_discrete(name  ="Disease Status",  labels=c("CRA", "CRC", "Control")) + theme_set(theme_bw(base_size=18)) + theme(plot.title = element_text(hjust = 0)) + colScale
+
+
+###########################################################################################################################
+ordPresAbs = ordinate(normalize(physeq_SG,method="pa"), method="PCoA", distance="jaccard")
+p_SG_jaccard <- plot_ordination(physeq_SG, ordPresAbs, "samples", color="Study", shape="disease_stat")
+p_SG_jaccard$layers <- p_SG_jaccard$layers[-1]
+p_SG_jaccard <- p_SG_jaccard + geom_point(size=4) + scale_x_continuous(breaks=c(-0.4,-0.2,0.0,0.2, 0.4)) + ggtitle("1D") + theme_set(theme_bw(base_size=18)) + theme(plot.title = element_text(hjust = 0)) +  scale_shape_discrete(name  ="Disease Status",  labels=c("CRA", "CRC", "Control")) + colScale
+
+jsd = ordinate(physeq_SG, method="PCoA", distance="jsd")
+
+p_SG_jsd <- plot_ordination(physeq_SG_tss, jsd, "samples", color="Study", shape="disease_stat") +
+  geom_point(size=4) + ggtitle("1D") +  scale_shape_discrete(name="Disease Status",  labels=c("CRA", "CRC", "Control")) + theme_set(theme_bw(base_size=18)) + theme(plot.title = element_text(hjust = 0)) 
+
+###########################################################################################################################
+
+```
+
+
+```{r}
+tiff("CRCFig1.tiff", width = 20, height = 15, units = "in", res = 300,
+compression = "lzw", colortype = "true")
+grid_arrange_shared_legend <- function(...) {
+  plots <- list(...)
+  g <- ggplotGrob(plots[[1]] + theme(legend.position="right"))$grobs
+  legend <- g[[which(sapply(g, function(x) x$name) == "guide-box")]]
+  lw <- sum(legend$width)
+  gl <- lapply(plots, function(x) x + theme(legend.position="none")) 
+  grid.arrange(arrangeGrob(grobs = gl), legend, 
+               ncol = 2, widths = unit.c(unit(1, "npc") - lw, lw))
+}
+
+grid_arrange_shared_legend(p_Q_Bray, p_Q_jaccard, p_SG_Bray, p_SG_jaccard)
+invisible(dev.off())
+
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
